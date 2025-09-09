@@ -63,6 +63,7 @@ optuna==4.5.0
 
 #EXTRA
 imagecodecs==2025.8.2
+ipython==8.28.0
 pytest==8.4.1
 PyYAML==6.0.2
 sympy==1.14.0

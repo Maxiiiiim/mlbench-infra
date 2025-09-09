@@ -32,36 +32,83 @@ def autograde_cvfold(X: pd.DataFrame, y: pd.DataFrame, train_code: object, grade
                 preds = modular_predict()
             score = grader(preds, y_val, comp)
             scores.append(score)
-            print(f"autograde_cvfold() : finished fold {i+1}/{comp['cv_folds']}")
+            print(f"autograde_cvfold() : finished fold {len(scores)}/{comp['cv_folds']}")
         except Exception as e:
             common.report_error(f"Submission code execution failed : {sys.exc_info()}")
             scores.append(np.nan)  # Mark failed folds
 
-    folds_root = Path(f"competitions/folds/{competition_id}").resolve()
-    private_root = Path(f"competitions/validation/{competition_id}").resolve()
-    num_folds = len([p for p in folds_root.iterdir() if p.is_dir() and p.name.startswith("fold_")])
-    if num_folds == comp["cv_folds"]:
-        # Use existing folds
-        for i in range(num_folds):
-            train_path = folds_root / f"fold_{i}" / "train.csv"
-            x_val_path = private_root / f"fold_{i}" / "X_val.csv"
-            y_val_path = private_root / f"fold_{i}" / "y_val.csv"
+        # Check if this is an image classification task
 
-            df_train = pd.read_csv(train_path)
-            X_val = pd.read_csv(x_val_path)
-            y_val = pd.read_csv(y_val_path)
+    if comp.get("data_type") == "image_classification":
+        # For image classification, use the existing fold structure
+        folds_root = Path(f"competitions/folds/{competition_id}").resolve()
+        private_root = Path(f"competitions/private/{competition_id}").resolve()
 
-            X_train, y_train = df_train.drop(columns=[comp["target_col"]]), df_train[[comp["target_col"]]]
+        # Check if folds exist
+        if folds_root.exists() and private_root.exists():
+            # For image classification, use the existing fold files directly
+            train_path = folds_root / "train_0.csv"
+            x_val_path = folds_root / "X_val_0.csv"
+            y_val_path = private_root / "y_val_0.csv"
 
-            cvfold_run(X_train, y_train, X_val, y_val)
+            if train_path.exists() and x_val_path.exists() and y_val_path.exists():
+                # Use existing fold files
+                df_train = pd.read_csv(train_path)
+                X_val = pd.read_csv(x_val_path)
+                y_val = pd.read_csv(y_val_path)
 
+                X_train, y_train = df_train.drop(columns=[comp["target_col"]]), df_train[[comp["target_col"]]]
+
+                cvfold_run(X_train, y_train, X_val, y_val)
+            else:
+                # Fall back to manual splitting for image classification
+                if comp["cv_folds"] < 2:
+                    # If only 1 fold requested, use all data for training and validation
+                    cvfold_run(X, y, X, y)
+                else:
+                    kf = KFold(n_splits=comp["cv_folds"])
+                    for i, (train_idx, val_idx) in enumerate(kf.split(X)):
+                        X_train, y_train = X.iloc[train_idx], y.iloc[train_idx]
+                        X_val, y_val = X.iloc[val_idx], y.iloc[val_idx]
+                        cvfold_run(X_train, y_train, X_val, y_val)
+        else:
+            # No existing folds, create them manually
+            if comp["cv_folds"] < 2:
+                # If only 1 fold requested, use all data for training and validation
+                cvfold_run(X, y, X, y)
+            else:
+                kf = KFold(n_splits=comp["cv_folds"])
+                for i, (train_idx, val_idx) in enumerate(kf.split(X)):
+                    X_train, y_train = X.iloc[train_idx], y.iloc[train_idx]
+                    X_val, y_val = X.iloc[val_idx], y.iloc[val_idx]
+                    cvfold_run(X_train, y_train, X_val, y_val)
     else:
-        # Split them manually
-        kf = KFold(n_splits=comp["cv_folds"])
-        for i, (train_idx, val_idx) in enumerate(kf.split(X)):
-            X_train, y_train = X.iloc[train_idx], y.iloc[train_idx]
-            X_val, y_val = X.iloc[val_idx], y.iloc[val_idx]
-            cvfold_run(X_train, y_train, X_val, y_val)
+    # Regular tabular data handling
+        folds_root = Path(f"competitions/folds/{competition_id}").resolve()
+        private_root = Path(f"competitions/validation/{competition_id}").resolve()
+        num_folds = len([p for p in folds_root.iterdir() if p.is_dir() and p.name.startswith("fold_")])
+        if num_folds == comp["cv_folds"]:
+            # Use existing folds
+            for i in range(num_folds):
+                train_path = folds_root / f"fold_{i}" / "train.csv"
+                x_val_path = private_root / f"fold_{i}" / "X_val.csv"
+                y_val_path = private_root / f"fold_{i}" / "y_val.csv"
+
+                df_train = pd.read_csv(train_path)
+                X_val = pd.read_csv(x_val_path)
+                y_val = pd.read_csv(y_val_path)
+
+                X_train, y_train = df_train.drop(columns=[comp["target_col"]]), df_train[[comp["target_col"]]]
+
+                cvfold_run(X_train, y_train, X_val, y_val)
+
+        else:
+            # Split them manually
+            kf = KFold(n_splits=comp["cv_folds"])
+            for i, (train_idx, val_idx) in enumerate(kf.split(X)):
+                X_train, y_train = X.iloc[train_idx], y.iloc[train_idx]
+                X_val, y_val = X.iloc[val_idx], y.iloc[val_idx]
+                cvfold_run(X_train, y_train, X_val, y_val)
 
     # Aggregate results
     valid_scores = [s for s in scores if not np.isnan(s)]
@@ -95,10 +142,20 @@ def grade_llm_code(train_code: dict, competition_id: str, language: str, mono_pr
 
     # Load data
     try:
-        train = pd.read_csv(f"competitions/data/{competition_id}/train.csv")  # Data should be mounted in this format
-        X, y = train.drop(columns=[comp["target_col"]]), train[comp["target_col"]]
+        # Check if this is an image classification task
+        if comp.get("data_type") == "image_classification":
+            # For image classification, load from data directory
+            train = pd.read_csv(f"data/{competition_id}/train.csv")
+            X, y = train.drop(columns=[comp["target_col"]]), train[comp["target_col"]]
+        else:
+            # For regular tabular data, load from competitions/data
+            train = pd.read_csv(f"competitions/data/{competition_id}/train.csv")
+            X, y = train.drop(columns=[comp["target_col"]]), train[comp["target_col"]]
     except Exception as e:
-        common.report_error(f"grade_llm_code() : internal error : data loading failed: {e=} (file competitions/data/{competition_id}/train.csv)")
+        if comp.get("data_type") == "image_classification":
+            common.report_error(f"grade_llm_code() : internal error : data loading failed: {e=} (file data/{competition_id}/train.csv)")
+        else:
+            common.report_error(f"grade_llm_code() : internal error : data loading failed: {e=} (file competitions/data/{competition_id}/train.csv)")
         common.graceful_exit(1)
 
     scores = []

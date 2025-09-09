@@ -89,5 +89,15 @@
         "direction": "maximize",
         "cv_folds": 3,
         "output_hint": "probabilities for class 1 (floats in [0, 1])"
+    },
+    "classify-leaves": {
+        "metric": "accuracy_score",
+        "target_col": "label",
+        "direction": "maximize",
+        "cv_folds": 3,
+        "output_hint": "class labels (strings)",
+        "data_type": "image_classification",
+        "image_path": "images/",
+        "grader": "image_classification"
     }
 }
